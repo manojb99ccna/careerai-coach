@@ -1,0 +1,55 @@
+.scan-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  padding: 2rem;
+}
+
+.scan-card {
+  width: 100%;
+  max-width: 720px;
+  background: #020617;
+  border-radius: 1.5rem;
+  padding: 2rem;
+  box-shadow:
+    0 18px 45px rgba(15, 23, 42, 0.75),
+    0 1px 3px rgba(15, 23, 42, 0.9);
+  color: #e5e7eb;
+}
+
+.scan-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.scan-subtitle {
+  font-size: 0.95rem;
+  color: #9ca3af;
+  margin-bottom: 1.5rem;
+}
+
+.scan-webcam-wrapper {
+  border-radius: 1.25rem;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  margin-bottom: 1.5rem;
+}
+
+.scan-webcam {
+  width: 100%;
+  display: block;
+}
+
+.scan-error {
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: #fecaca;
+}
+
+.full-width {
+  width: 100%;
+}
+
