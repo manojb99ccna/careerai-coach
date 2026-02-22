@@ -47,6 +47,7 @@ function FaceScanPage() {
     try {
       const encoding = computeFaceEncoding(screenshot)
       localStorage.setItem('careerai_face_encoding', JSON.stringify(encoding))
+      localStorage.setItem('careerai_face_image', screenshot)
 
       const response = await apiClient.post('/auth/face/login', {
         encoding,

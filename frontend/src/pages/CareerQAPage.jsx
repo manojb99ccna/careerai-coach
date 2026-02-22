@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiClient } from '../api/client'
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
 function CareerQAPage() {
   const navigate = useNavigate()
   const [roles, setRoles] = useState([])
@@ -10,8 +12,11 @@ function CareerQAPage() {
   const [experienceLevelId, setExperienceLevelId] = useState('')
   const [skills, setSkills] = useState('')
   const [resume, setResume] = useState(null)
+  const [resumeFileName, setResumeFileName] = useState(null)
   const [isLoadingOptions, setIsLoadingOptions] = useState(true)
   const [optionsError, setOptionsError] = useState('')
+  const [isUploadingResume, setIsUploadingResume] = useState(false)
+  const [resumeError, setResumeError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -85,6 +90,64 @@ function CareerQAPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (isLoadingOptions) {
+      return
+    }
+
+    const storedUser = localStorage.getItem('careerai_user')
+    if (!storedUser) {
+      return
+    }
+
+    let userId = null
+    try {
+      const parsed = JSON.parse(storedUser)
+      userId = parsed && parsed.id
+    } catch {
+      userId = null
+    }
+
+    if (!userId) {
+      return
+    }
+
+    let cancelled = false
+
+    async function loadExistingOnboarding() {
+      try {
+        const response = await apiClient.get(`/users/${userId}/onboarding`)
+        if (cancelled) {
+          return
+        }
+
+        const data = response.data
+        if (data) {
+          if (data.role_id) {
+            setRoleId(String(data.role_id))
+          }
+          if (data.experience_level_id) {
+            setExperienceLevelId(String(data.experience_level_id))
+          }
+          if (typeof data.skills === 'string') {
+            setSkills(data.skills)
+          }
+          if (data.resume_file_name) {
+            setResumeFileName(data.resume_file_name)
+          }
+        }
+      } catch {
+        // ignore 404 or other errors; treat as no existing onboarding
+      }
+    }
+
+    loadExistingOnboarding()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isLoadingOptions])
+
   const handleSubmit = async (event) => {
     event.preventDefault()
 
@@ -111,7 +174,7 @@ function CareerQAPage() {
       roleId,
       experienceLevelId,
       skills,
-      resumeName: resume ? resume.name : null,
+      resumeName: resumeFileName || (resume ? resume.name : null),
     }
 
     localStorage.setItem('careerai_onboarding_answers', JSON.stringify(answers))
@@ -122,7 +185,7 @@ function CareerQAPage() {
         role_id: roleId ? Number(roleId) : null,
         experience_level_id: experienceLevelId ? Number(experienceLevelId) : null,
         skills,
-        resume_file_name: resume ? resume.name : null,
+        resume_file_name: resumeFileName || (resume ? resume.name : null),
       })
       localStorage.setItem('careerai_onboarding_complete', 'true')
       navigate('/dashboard')
@@ -131,9 +194,48 @@ function CareerQAPage() {
     }
   }
 
-  const handleFileChange = (event) => {
+  const handleFileChange = async (event) => {
     const file = event.target.files && event.target.files[0]
-    setResume(file || null)
+    if (!file) {
+      return
+    }
+    setResume(file)
+    setResumeError('')
+
+    const storedUser = localStorage.getItem('careerai_user')
+    if (!storedUser) {
+      setResumeError('You must be logged in to upload a resume.')
+      return
+    }
+
+    let userId = null
+    try {
+      const parsed = JSON.parse(storedUser)
+      userId = parsed && parsed.id
+    } catch {
+      userId = null
+    }
+
+    if (!userId) {
+      setResumeError('Unable to determine user for resume upload.')
+      return
+    }
+
+    setIsUploadingResume(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await apiClient.put(`/users/${userId}/resume`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      if (response.data && response.data.resume_file_name) {
+        setResumeFileName(response.data.resume_file_name)
+      }
+    } catch {
+      setResumeError('There was a problem uploading your resume. Please try again.')
+    } finally {
+      setIsUploadingResume(false)
+    }
   }
 
   return (
@@ -192,8 +294,22 @@ function CareerQAPage() {
                   />
                 </div>
                 <div className="mb-4">
-                  <label className="form-label">Resume upload</label>
+                  <label className="form-label d-flex justify-content-between align-items-center">
+                    <span>Resume upload</span>
+                    {resumeFileName && (
+                      <a
+                        href={`${apiBaseUrl}/media/resume/${resumeFileName}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="small"
+                      >
+                        Open current resume
+                      </a>
+                    )}
+                  </label>
                   <input type="file" className="form-control" onChange={handleFileChange} />
+                  {isUploadingResume && <div className="form-text">Uploading resume...</div>}
+                  {resumeError && <div className="text-danger small mt-1">{resumeError}</div>}
                 </div>
                 <button type="submit" className="btn btn-primary">
                   Save and continue

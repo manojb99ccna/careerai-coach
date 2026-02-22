@@ -15,7 +15,8 @@ function RegisterPage() {
     event.preventDefault()
 
     const storedEncoding = localStorage.getItem('careerai_face_encoding')
-    if (!storedEncoding) {
+    const storedImage = localStorage.getItem('careerai_face_image')
+    if (!storedEncoding || !storedImage) {
       setError('No face scan found. Please go back and scan your face again.')
       return
     }
@@ -36,6 +37,7 @@ function RegisterPage() {
         email,
         phone,
         encoding,
+        profile_image: storedImage,
       })
 
       if (response.data.token) {
@@ -45,6 +47,8 @@ function RegisterPage() {
         localStorage.setItem('careerai_user', JSON.stringify(response.data.user))
       }
       localStorage.setItem('careerai_onboarding_complete', 'false')
+      localStorage.removeItem('careerai_face_encoding')
+      localStorage.removeItem('careerai_face_image')
 
       navigate('/onboarding')
     } catch {

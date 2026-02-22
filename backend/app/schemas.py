@@ -15,6 +15,7 @@ class UserBase(BaseModel):
 
 class UserRead(UserBase):
     id: int
+    profile_image: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -28,11 +29,16 @@ class FaceLoginResponse(BaseModel):
 
 class RegisterRequest(UserBase):
     encoding: List[float]
+    profile_image: Optional[str] = None
 
 
 class RegisterResponse(BaseModel):
     token: str
     user: UserRead
+
+
+class ProfileImageUpdate(BaseModel):
+    profile_image: Optional[str] = None
 
 
 class RoleRead(BaseModel):
