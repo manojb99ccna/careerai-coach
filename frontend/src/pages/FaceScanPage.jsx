@@ -59,6 +59,23 @@ function FaceScanPage() {
         if (response.data.user) {
           localStorage.setItem('careerai_user', JSON.stringify(response.data.user))
         }
+
+        const userId = response.data.user && response.data.user.id
+        if (userId) {
+          try {
+            await apiClient.get(`/users/${userId}/onboarding`)
+            localStorage.setItem('careerai_onboarding_complete', 'true')
+            navigate('/dashboard')
+            return
+          } catch (error) {
+            if (error.response && error.response.status === 404) {
+              localStorage.setItem('careerai_onboarding_complete', 'false')
+              navigate('/onboarding')
+              return
+            }
+          }
+        }
+
         navigate('/dashboard')
       } else if (response.data.status === 'register_required') {
         navigate('/register')
@@ -90,10 +107,10 @@ function FaceScanPage() {
         <button type="button" className="primary-button full-width" onClick={handleScan} disabled={isLoading}>
           {isLoading ? 'Scanning...' : 'Scan Face'}
         </button>
+       
       </div>
     </div>
   )
 }
 
 export default FaceScanPage
-

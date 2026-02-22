@@ -44,8 +44,9 @@ function RegisterPage() {
       if (response.data.user) {
         localStorage.setItem('careerai_user', JSON.stringify(response.data.user))
       }
+      localStorage.setItem('careerai_onboarding_complete', 'false')
 
-      navigate('/dashboard')
+      navigate('/onboarding')
     } catch {
       setError('Registration failed. Please check your details and try again.')
     } finally {
@@ -82,4 +83,3 @@ function RegisterPage() {
 }
 
 export default RegisterPage
-

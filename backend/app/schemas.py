@@ -34,3 +34,37 @@ class RegisterResponse(BaseModel):
     token: str
     user: UserRead
 
+
+class RoleRead(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class ExperienceLevelRead(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class OnboardingBase(BaseModel):
+    user_id: int
+    role_id: Optional[int] = None
+    experience_level_id: Optional[int] = None
+    skills: Optional[str] = None
+    resume_file_name: Optional[str] = None
+
+
+class OnboardingCreate(OnboardingBase):
+    pass
+
+
+class OnboardingRead(OnboardingBase):
+    id: int
+
+    class Config:
+        from_attributes = True

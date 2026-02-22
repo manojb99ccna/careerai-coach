@@ -47,6 +47,68 @@ def health_check() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/meta/roles", response_model=List[schemas.RoleRead])
+def list_roles(db: Session = Depends(get_db)) -> List[schemas.RoleRead]:
+    roles = (
+        db.query(models.Role)
+        .filter(models.Role.is_active.is_(True))
+        .order_by(models.Role.name.asc())
+        .all()
+    )
+    return roles
+
+
+@app.get("/meta/experience-levels", response_model=List[schemas.ExperienceLevelRead])
+def list_experience_levels(db: Session = Depends(get_db)) -> List[schemas.ExperienceLevelRead]:
+    levels = (
+        db.query(models.ExperienceLevel)
+        .filter(models.ExperienceLevel.is_active.is_(True))
+        .order_by(models.ExperienceLevel.sort_order.asc(), models.ExperienceLevel.name.asc())
+        .all()
+    )
+    return levels
+
+
+@app.get("/users/{user_id}/onboarding", response_model=schemas.OnboardingRead)
+def get_user_onboarding(user_id: int, db: Session = Depends(get_db)) -> schemas.OnboardingRead:
+    record = db.query(models.UserOnboarding).filter(models.UserOnboarding.user_id == user_id).first()
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Onboarding not found")
+    return record
+
+
+@app.post("/users/{user_id}/onboarding", response_model=schemas.OnboardingRead, status_code=status.HTTP_201_CREATED)
+def upsert_user_onboarding(
+    user_id: int,
+    payload: schemas.OnboardingCreate,
+    db: Session = Depends(get_db),
+) -> schemas.OnboardingRead:
+    if payload.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User id mismatch")
+
+    existing = db.query(models.UserOnboarding).filter(models.UserOnboarding.user_id == user_id).first()
+    if existing is None:
+        record = models.UserOnboarding(
+            user_id=user_id,
+            role_id=payload.role_id,
+            experience_level_id=payload.experience_level_id,
+            skills=payload.skills,
+            resume_file_name=payload.resume_file_name,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+
+    existing.role_id = payload.role_id
+    existing.experience_level_id = payload.experience_level_id
+    existing.skills = payload.skills
+    existing.resume_file_name = payload.resume_file_name
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
 @app.post("/auth/face/login", response_model=schemas.FaceLoginResponse)
 def face_login(payload: schemas.FaceScanRequest, db: Session = Depends(get_db)) -> schemas.FaceLoginResponse:
     users: List[models.User] = db.query(models.User).all()
@@ -86,4 +148,3 @@ def face_register(payload: schemas.RegisterRequest, db: Session = Depends(get_db
 
     token = auth.create_access_token({"sub": str(user.id)})
     return schemas.RegisterResponse(token=token, user=schemas.UserRead.model_validate(user))
-
