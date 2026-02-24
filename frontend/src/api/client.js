@@ -9,3 +9,13 @@ export const apiClient = axios.create({
   },
 })
 
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('careerai_token')
+  if (token) {
+    const updatedConfig = { ...config }
+    updatedConfig.headers = updatedConfig.headers || {}
+    updatedConfig.headers.Authorization = `Bearer ${token}`
+    return updatedConfig
+  }
+  return config
+})

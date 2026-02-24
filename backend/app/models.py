@@ -20,6 +20,7 @@ class Role(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default="0")
     is_active = Column(Boolean, nullable=False, server_default="1")
 
 
@@ -61,3 +62,76 @@ class UserLoginDetail(Base):
     login_status = Column(String(10), nullable=False)
     failure_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TrainingPlan(Base):
+    __tablename__ = "training_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
+    experience_level_id = Column(Integer, ForeignKey("experience_levels.id"), nullable=False)
+    title = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+    is_generated = Column(Boolean, nullable=False, server_default="0")
+    generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MasterMilestone(Base):
+    __tablename__ = "master_milestones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_plan_id = Column(Integer, ForeignKey("training_plans.id"), nullable=False)
+    milestone_number = Column(Integer, nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    estimated_days = Column(Integer, nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0")
+
+
+class MasterStudyMaterial(Base):
+    __tablename__ = "master_study_materials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    master_milestone_id = Column(Integer, ForeignKey("master_milestones.id"), nullable=False)
+    content_type = Column(String(20), nullable=False, server_default="markdown")
+    title = Column(String(255), nullable=True)
+    content = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0")
+
+
+class MasterQuizQuestion(Base):
+    __tablename__ = "master_quiz_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    master_milestone_id = Column(Integer, ForeignKey("master_milestones.id"), nullable=False)
+    question_text = Column(Text, nullable=False)
+    question_type = Column(String(50), nullable=False, server_default="multiple_choice")
+    difficulty = Column(String(20), nullable=False)
+    options = Column(Text, nullable=True)
+    correct_answer = Column(String(100), nullable=False)
+    explanation = Column(Text, nullable=True)
+    tags = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class UserTrainingPlan(Base):
+    __tablename__ = "user_training_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    training_plan_id = Column(Integer, ForeignKey("training_plans.id"), nullable=False)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    status = Column(String(20), nullable=False, server_default="active")
+    current_milestone_number = Column(Integer, nullable=False, server_default="1")
+
+
+class UserMilestoneProgress(Base):
+    __tablename__ = "user_milestone_progress"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_training_plan_id = Column(Integer, ForeignKey("user_training_plans.id"), nullable=False)
+    master_milestone_id = Column(Integer, ForeignKey("master_milestones.id"), nullable=False)
+    status = Column(String(20), nullable=False, server_default="locked")
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    progress_percentage = Column(Integer, nullable=False, server_default="0")

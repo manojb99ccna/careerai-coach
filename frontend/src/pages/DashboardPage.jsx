@@ -1,22 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import './DashboardPage.css'
 
 function DashboardPage() {
-  const [userName, setUserName] = useState('')
-
-  useEffect(() => {
+  let initialUserName = ''
+  if (typeof window !== 'undefined') {
     const storedUser = localStorage.getItem('careerai_user')
     if (storedUser) {
       try {
-        const parsed = JSON.parse(storedUser)
-        if (parsed && parsed.name) {
-          setUserName(parsed.name)
+        const parsedUser = JSON.parse(storedUser)
+        if (parsedUser && typeof parsedUser.name === 'string') {
+          initialUserName = parsedUser.name
         }
       } catch {
-        setUserName('')
+        initialUserName = ''
       }
     }
-  }, [])
+  }
+
+  const [userName] = useState(initialUserName)
 
   return (
     <div className="dashboard-container">
@@ -31,4 +32,3 @@ function DashboardPage() {
 }
 
 export default DashboardPage
-

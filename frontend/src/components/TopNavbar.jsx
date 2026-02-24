@@ -1,29 +1,34 @@
 import { useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 function TopNavbar() {
   const navigate = useNavigate()
-  const [profileImageName, setProfileImageName] = useState(null)
-  const [userName, setUserName] = useState('User')
-
-  useEffect(() => {
+  let initialUserName = 'User'
+  let initialProfileImage = null
+  if (typeof window !== 'undefined') {
     const stored = localStorage.getItem('careerai_user')
-    if (!stored) {
-      return
-    }
-    try {
-      const user = JSON.parse(stored)
-      if (user) {
-        setUserName(user.name || 'User')
-        setProfileImageName(user.profile_image || null)
+    if (stored) {
+      try {
+        const parsedUser = JSON.parse(stored)
+        if (parsedUser && typeof parsedUser === 'object') {
+          if (typeof parsedUser.name === 'string' && parsedUser.name.trim()) {
+            initialUserName = parsedUser.name
+          }
+          if (typeof parsedUser.profile_image === 'string' && parsedUser.profile_image.trim()) {
+            initialProfileImage = parsedUser.profile_image
+          }
+        }
+      } catch {
+        initialUserName = 'User'
+        initialProfileImage = null
       }
-    } catch {
-      setUserName('User')
-      setProfileImageName(null)
     }
-  }, [])
+  }
+
+  const [profileImageName] = useState(initialProfileImage)
+  const [userName] = useState(initialUserName)
 
   const handleLogout = () => {
     localStorage.removeItem('careerai_token')

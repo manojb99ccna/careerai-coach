@@ -74,3 +74,31 @@ class OnboardingRead(OnboardingBase):
 
     class Config:
         from_attributes = True
+
+
+class TrainingPlanGenerateRequest(BaseModel):
+    role_id: int
+    experience_level_id: int
+    skills: Optional[str] = None
+
+
+class MilestoneStatusRead(BaseModel):
+    id: int
+    milestone_number: int
+    title: str
+    description: Optional[str] = None
+    estimated_days: int
+    status: str
+
+
+class TrainingPlanRead(BaseModel):
+    id: int
+    title: Optional[str] = None
+    description: Optional[str] = None
+    current_milestone_number: int
+    milestones: List[MilestoneStatusRead]
+
+
+class TrainingPlanResponse(BaseModel):
+    has_plan: bool
+    plan: Optional[TrainingPlanRead] = None

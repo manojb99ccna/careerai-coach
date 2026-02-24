@@ -83,7 +83,7 @@ function FaceScanPage() {
       } else {
         setError('Unexpected response from server.')
       }
-    } catch (e) {
+    } catch {
       setError('There was a problem contacting the server. Please try again.')
     } finally {
       setIsLoading(false)

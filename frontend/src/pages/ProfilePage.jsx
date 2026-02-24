@@ -96,6 +96,9 @@ function ProfilePage() {
         setProfileImageName(response.data.profile_image || null)
       }
     } catch {
+      setIsUpdatingImage(false)
+      setShowCamera(false)
+      return
     } finally {
       setIsUpdatingImage(false)
       setShowCamera(false)

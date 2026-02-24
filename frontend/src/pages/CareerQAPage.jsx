@@ -238,6 +238,20 @@ function CareerQAPage() {
     }
   }
 
+  let downloadUserId = null
+  const storedUserForDownload = typeof window !== 'undefined' ? localStorage.getItem('careerai_user') : null
+  if (storedUserForDownload) {
+    try {
+      const parsed = JSON.parse(storedUserForDownload)
+      downloadUserId = parsed && parsed.id
+    } catch {
+      downloadUserId = null
+    }
+  }
+
+  const resumeDownloadUrl =
+    downloadUserId && resumeFileName ? `${apiBaseUrl}/users/${downloadUserId}/resume/download` : null
+
   return (
     <div className="container py-4">
       <div className="row justify-content-center">
@@ -296,14 +310,12 @@ function CareerQAPage() {
                 <div className="mb-4">
                   <label className="form-label d-flex justify-content-between align-items-center">
                     <span>Resume upload</span>
-                    {resumeFileName && (
+                    {resumeDownloadUrl && (
                       <a
-                        href={`${apiBaseUrl}/media/resume/${resumeFileName}`}
-                        target="_blank"
-                        rel="noreferrer"
+                        href={resumeDownloadUrl}
                         className="small"
                       >
-                        Open current resume
+                        Download current resume
                       </a>
                     )}
                   </label>
