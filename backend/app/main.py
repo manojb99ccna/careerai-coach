@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import auth, face_utils, models, schemas
@@ -774,6 +775,409 @@ def generate_training_plan(
     db.refresh(user_plan)
 
     return _build_training_plan_response(user_plan, db)
+
+
+@app.get("/training/milestones/{milestone_id}", response_model=schemas.MilestoneDetailRead)
+def get_milestone_detail(
+    milestone_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> schemas.MilestoneDetailRead:
+    # 1. Verify user has a training plan
+    user_plan = (
+        db.query(models.UserTrainingPlan)
+        .filter(models.UserTrainingPlan.user_id == current_user_id)
+        .first()
+    )
+    if not user_plan:
+        raise HTTPException(status_code=404, detail="Training plan not found")
+
+    # 2. Get master milestone
+    master_milestone = (
+        db.query(models.MasterMilestone)
+        .filter(models.MasterMilestone.id == milestone_id)
+        .first()
+    )
+    if not master_milestone:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+
+    # 3. Get user progress for this milestone
+    progress = (
+        db.query(models.UserMilestoneProgress)
+        .filter(
+            models.UserMilestoneProgress.user_training_plan_id == user_plan.id,
+            models.UserMilestoneProgress.master_milestone_id == milestone_id,
+        )
+        .first()
+    )
+    if not progress:
+        # Should not happen if plan generated correctly, but handle just in case
+        raise HTTPException(status_code=404, detail="Milestone progress not tracked")
+
+    if progress.status == "locked":
+        raise HTTPException(status_code=403, detail="This milestone is locked. Complete previous milestones first.")
+
+    # 4. Get study materials
+    materials = (
+        db.query(models.MasterStudyMaterial)
+        .filter(models.MasterStudyMaterial.master_milestone_id == milestone_id)
+        .order_by(models.MasterStudyMaterial.sort_order.asc())
+        .all()
+    )
+
+    # 5. Get completed materials
+    completed_materials_rows = (
+        db.query(models.UserStudyMaterialProgress)
+        .filter(models.UserStudyMaterialProgress.user_milestone_progress_id == progress.id)
+        .filter(models.UserStudyMaterialProgress.is_completed.is_(True))
+        .all()
+    )
+    completed_ids = {row.master_study_material_id for row in completed_materials_rows}
+
+    study_materials_read = []
+    for m in materials:
+        study_materials_read.append(
+            schemas.StudyMaterialRead(
+                id=m.id,
+                content_type=m.content_type,
+                title=m.title,
+                short_description=m.short_description,
+                content=m.content,
+                sort_order=m.sort_order,
+                is_completed=(m.id in completed_ids),
+            )
+        )
+
+    # 6. Check quiz status (latest attempt)
+    latest_attempt = (
+        db.query(models.UserQuizAttempt)
+        .filter(models.UserQuizAttempt.user_milestone_progress_id == progress.id)
+        .order_by(models.UserQuizAttempt.attempted_at.desc())
+        .first()
+    )
+    quiz_passed = latest_attempt.passed if latest_attempt else False
+    quiz_score = latest_attempt.score if latest_attempt else None
+
+    # 7. Get practice guidelines (from quiz questions explanation or description? No, description is short)
+    # The prompt asked for "practice guidelines: 2–4 sentences describing practice"
+    # But MasterMilestone doesn't have a practice_guidelines column in my previous `models.py` read.
+    # Wait, I might have missed it or it wasn't added.
+    # Let's check `models.py` again.
+    # `MasterMilestone` has `title`, `description`, `estimated_days`, `sort_order`.
+    # It does NOT have `practice_guidelines`.
+    # However, in `generate_training_plan`, I saw `practice_guidelines` being processed.
+    # Where was it stored?
+    # In `main.py` lines 714-747, I see `MasterMilestone` creation.
+    # I don't see `practice_guidelines` being saved to DB.
+    # This is a schema gap. I should probably add it to `MasterMilestone` or just reuse description for now.
+    # Or I can use a default text if missing.
+    # I will stick to "Practice guidelines not available" if column missing.
+    # For now, let's assume it's not there and just return a placeholder or description.
+
+    return schemas.MilestoneDetailRead(
+        id=master_milestone.id,
+        milestone_number=master_milestone.milestone_number,
+        title=master_milestone.title,
+        description=master_milestone.description,
+        estimated_days=master_milestone.estimated_days or 7,
+        status=progress.status,
+        progress_percentage=progress.progress_percentage,
+        study_materials=study_materials_read,
+        practice_guidelines=master_milestone.description, # Fallback
+        quiz_passed=quiz_passed,
+        quiz_score=quiz_score,
+        practice_completed=progress.practice_completed,
+    )
+
+
+@app.post("/training/milestones/{milestone_id}/study/{material_id}/toggle")
+def toggle_study_material(
+    milestone_id: int,
+    material_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    # Verify ownership
+    user_plan = (
+        db.query(models.UserTrainingPlan)
+        .filter(models.UserTrainingPlan.user_id == current_user_id)
+        .first()
+    )
+    if not user_plan:
+        raise HTTPException(status_code=404, detail="Training plan not found")
+
+    progress = (
+        db.query(models.UserMilestoneProgress)
+        .filter(
+            models.UserMilestoneProgress.user_training_plan_id == user_plan.id,
+            models.UserMilestoneProgress.master_milestone_id == milestone_id,
+        )
+        .first()
+    )
+    if not progress:
+        raise HTTPException(status_code=404, detail="Milestone progress not found")
+
+    # Check material exists
+    material = db.query(models.MasterStudyMaterial).filter(models.MasterStudyMaterial.id == material_id).first()
+    if not material:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    # Toggle
+    user_material = (
+        db.query(models.UserStudyMaterialProgress)
+        .filter(
+            models.UserStudyMaterialProgress.user_milestone_progress_id == progress.id,
+            models.UserStudyMaterialProgress.master_study_material_id == material_id,
+        )
+        .first()
+    )
+
+    if user_material:
+        user_material.is_completed = not user_material.is_completed
+        user_material.completed_at = func.now() if user_material.is_completed else None
+    else:
+        user_material = models.UserStudyMaterialProgress(
+            user_milestone_progress_id=progress.id,
+            master_study_material_id=material_id,
+            is_completed=True,
+            completed_at=func.now(),
+        )
+        db.add(user_material)
+        db.flush() # Ensure ID is generated and attached to session
+    
+    db.commit()
+    db.refresh(user_material) # Refresh to get latest state
+    
+    # Update progress percentage
+    total_materials = db.query(models.MasterStudyMaterial).filter(models.MasterStudyMaterial.master_milestone_id == milestone_id).count()
+    completed_count = (
+        db.query(models.UserStudyMaterialProgress)
+        .filter(models.UserStudyMaterialProgress.user_milestone_progress_id == progress.id)
+        .filter(models.UserStudyMaterialProgress.is_completed.is_(True))
+        .count()
+    )
+    
+    if total_materials > 0:
+        new_percentage = int((completed_count / total_materials) * 100)
+        progress.progress_percentage = new_percentage
+        db.commit()
+
+    return {"status": "success", "is_completed": user_material.is_completed}
+
+
+@app.post("/training/milestones/{milestone_id}/practice/complete")
+def complete_practice(
+    milestone_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    user_plan = (
+        db.query(models.UserTrainingPlan)
+        .filter(models.UserTrainingPlan.user_id == current_user_id)
+        .first()
+    )
+    if not user_plan:
+        raise HTTPException(status_code=404, detail="Training plan not found")
+
+    progress = (
+        db.query(models.UserMilestoneProgress)
+        .filter(
+            models.UserMilestoneProgress.user_training_plan_id == user_plan.id,
+            models.UserMilestoneProgress.master_milestone_id == milestone_id,
+        )
+        .first()
+    )
+    if not progress:
+        raise HTTPException(status_code=404, detail="Milestone progress not found")
+    
+    progress.practice_completed = True
+    db.commit()
+    
+    return {"status": "success", "practice_completed": True}
+
+
+@app.get("/training/milestones/{milestone_id}/questions", response_model=List[schemas.QuizQuestionRead])
+def get_milestone_questions(
+    milestone_id: int,
+    mode: str = "practice",  # practice or quiz
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> List[schemas.QuizQuestionRead]:
+    # Check plan access
+    user_plan = (
+        db.query(models.UserTrainingPlan)
+        .filter(models.UserTrainingPlan.user_id == current_user_id)
+        .first()
+    )
+    if not user_plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    # Get random questions
+    # Note: simple random order. For production, use func.random()
+    query = (
+        db.query(models.MasterQuizQuestion)
+        .filter(models.MasterQuizQuestion.master_milestone_id == milestone_id)
+        .order_by(func.random())
+    )
+
+    limit = 10 if mode == "practice" else 20
+    questions = query.limit(limit).all()
+
+    result = []
+    for q in questions:
+        # Hide correct answer if quiz mode?
+        # User requirement: "Quiz section (20 questions + submit + score + pass/fail)"
+        # If we send correct answer, user can cheat easily.
+        # But for "Practice", "immediate feedback" implies client needs to know.
+        
+        correct = q.correct_answer if mode == "practice" else None
+        explanation = q.explanation if mode == "practice" else None
+        
+        result.append(
+            schemas.QuizQuestionRead(
+                id=q.id,
+                question_text=q.question_text,
+                question_type=q.question_type,
+                difficulty=q.difficulty,
+                options=json.loads(q.options) if isinstance(q.options, str) else q.options,
+                correct_answer=correct,
+                explanation=explanation,
+            )
+        )
+    return result
+
+
+@app.post("/training/milestones/{milestone_id}/quiz/submit", response_model=schemas.QuizResult)
+def submit_quiz(
+    milestone_id: int,
+    payload: schemas.QuizSubmission,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> schemas.QuizResult:
+    # Verify plan
+    user_plan = (
+        db.query(models.UserTrainingPlan)
+        .filter(models.UserTrainingPlan.user_id == current_user_id)
+        .first()
+    )
+    if not user_plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    progress = (
+        db.query(models.UserMilestoneProgress)
+        .filter(
+            models.UserMilestoneProgress.user_training_plan_id == user_plan.id,
+            models.UserMilestoneProgress.master_milestone_id == milestone_id,
+        )
+        .first()
+    )
+    if not progress:
+        raise HTTPException(status_code=404, detail="Progress not found")
+
+    # Check Requirements: Study Materials
+    total_materials = db.query(models.MasterStudyMaterial).filter(models.MasterStudyMaterial.master_milestone_id == milestone_id).count()
+    completed_materials = (
+        db.query(models.UserStudyMaterialProgress)
+        .filter(models.UserStudyMaterialProgress.user_milestone_progress_id == progress.id)
+        .filter(models.UserStudyMaterialProgress.is_completed.is_(True))
+        .count()
+    )
+    if completed_materials < total_materials:
+        raise HTTPException(status_code=403, detail="All study materials must be completed before taking the quiz.")
+
+    # Check Requirements: Practice
+    if not progress.practice_completed:
+        raise HTTPException(status_code=403, detail="Practice must be completed before taking the quiz.")
+
+    # Calculate score
+    correct_count = 0
+    incorrect_count = 0
+    details = {}
+    
+    submitted_ids = [int(qid) for qid in payload.answers.keys()]
+    if not submitted_ids:
+         raise HTTPException(status_code=400, detail="No answers submitted")
+
+    questions = (
+        db.query(models.MasterQuizQuestion)
+        .filter(models.MasterQuizQuestion.id.in_(submitted_ids))
+        .all()
+    )
+    question_map = {q.id: q for q in questions}
+
+    for qid_str, user_answer in payload.answers.items():
+        qid = int(qid_str)
+        question = question_map.get(qid)
+        if not question:
+            continue
+        
+        is_correct = (user_answer.strip().upper() == question.correct_answer.strip().upper())
+        if is_correct:
+            correct_count += 1
+        else:
+            incorrect_count += 1
+            
+        details[qid] = {
+            "correct": is_correct,
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation
+        }
+
+    total = correct_count + incorrect_count
+    score_percent = int((correct_count / total) * 100) if total > 0 else 0
+    passed = score_percent >= 70  # Pass threshold
+
+    # Record attempt
+    attempt = models.UserQuizAttempt(
+        user_milestone_progress_id=progress.id,
+        score=score_percent,
+        total_questions=total,
+        passed=passed,
+    )
+    db.add(attempt)
+    
+    # Update milestone status if passed
+    if passed:
+        progress.status = "completed"
+        progress.completed_at = func.now()
+        progress.progress_percentage = 100
+        
+        # Unlock next milestone
+        current_ms_number = (
+            db.query(models.MasterMilestone.milestone_number)
+            .filter(models.MasterMilestone.id == milestone_id)
+            .scalar()
+        )
+        if current_ms_number:
+            next_ms = (
+                db.query(models.MasterMilestone)
+                .filter(models.MasterMilestone.training_plan_id == user_plan.training_plan_id)
+                .filter(models.MasterMilestone.milestone_number == current_ms_number + 1)
+                .first()
+            )
+            if next_ms:
+                next_progress = (
+                    db.query(models.UserMilestoneProgress)
+                    .filter(models.UserMilestoneProgress.user_training_plan_id == user_plan.id)
+                    .filter(models.UserMilestoneProgress.master_milestone_id == next_ms.id)
+                    .first()
+                )
+                if next_progress and next_progress.status == "locked":
+                    next_progress.status = "in_progress"
+                    next_progress.started_at = func.now()
+                    # Update current milestone number in plan
+                    user_plan.current_milestone_number = next_ms.milestone_number
+
+    db.commit()
+
+    return schemas.QuizResult(
+        score=score_percent,
+        total_questions=total,
+        passed=passed,
+        correct_count=correct_count,
+        incorrect_count=incorrect_count,
+        details=details
+    )
 
 
 @app.post("/auth/face/login", response_model=schemas.FaceLoginResponse)

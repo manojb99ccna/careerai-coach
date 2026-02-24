@@ -9,6 +9,7 @@ import RegisterPage from './pages/RegisterPage.jsx'
 import CareerQAPage from './pages/CareerQAPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import TrainingPage from './pages/TrainingPage.jsx'
+import MilestoneDetailPage from './pages/MilestoneDetailPage.jsx'
 import AIFeedbackPage from './pages/AIFeedbackPage.jsx'
 import ResumeSuggestionsPage from './pages/ResumeSuggestionsPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
@@ -30,6 +31,7 @@ function AppLayout() {
             <Route element={<ProtectedRoute requireOnboardingComplete />}>
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/training" element={<TrainingPage />} />
+              <Route path="/training/milestones/:id" element={<MilestoneDetailPage />} />
               <Route path="/ai-feedback" element={<AIFeedbackPage />} />
               <Route path="/resume-suggestions" element={<ResumeSuggestionsPage />} />
             </Route>

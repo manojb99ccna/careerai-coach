@@ -95,6 +95,7 @@ class MasterStudyMaterial(Base):
     master_milestone_id = Column(Integer, ForeignKey("master_milestones.id"), nullable=False)
     content_type = Column(String(20), nullable=False, server_default="markdown")
     title = Column(String(255), nullable=True)
+    short_description = Column(Text, nullable=True)
     content = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
 
@@ -135,3 +136,25 @@ class UserMilestoneProgress(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     progress_percentage = Column(Integer, nullable=False, server_default="0")
+    practice_completed = Column(Boolean, nullable=False, server_default="0")
+
+
+class UserStudyMaterialProgress(Base):
+    __tablename__ = "user_study_material_progress"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_milestone_progress_id = Column(Integer, ForeignKey("user_milestone_progress.id"), nullable=False)
+    master_study_material_id = Column(Integer, ForeignKey("master_study_materials.id"), nullable=False)
+    is_completed = Column(Boolean, nullable=False, server_default="0")
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class UserQuizAttempt(Base):
+    __tablename__ = "user_quiz_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_milestone_progress_id = Column(Integer, ForeignKey("user_milestone_progress.id"), nullable=False)
+    score = Column(Integer, nullable=False)
+    total_questions = Column(Integer, nullable=False)
+    passed = Column(Boolean, nullable=False, server_default="0")
+    attempted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

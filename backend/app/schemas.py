@@ -82,6 +82,60 @@ class TrainingPlanGenerateRequest(BaseModel):
     skills: Optional[str] = None
 
 
+class StudyMaterialRead(BaseModel):
+    id: int
+    content_type: str
+    title: Optional[str] = None
+    short_description: Optional[str] = None
+    content: Optional[str] = None
+    sort_order: int
+    is_completed: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class QuizQuestionRead(BaseModel):
+    id: int
+    question_text: str
+    question_type: str
+    difficulty: str
+    options: dict  # Parsed JSON
+    correct_answer: Optional[str] = None
+    explanation: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MilestoneDetailRead(BaseModel):
+    id: int
+    milestone_number: int
+    title: str
+    description: Optional[str] = None
+    estimated_days: int
+    status: str
+    progress_percentage: int
+    practice_completed: bool = False
+    study_materials: List[StudyMaterialRead]
+    practice_guidelines: Optional[str] = None
+    quiz_passed: bool = False
+    quiz_score: Optional[int] = None
+
+
+class QuizSubmission(BaseModel):
+    answers: dict  # question_id -> answer_string
+
+
+class QuizResult(BaseModel):
+    score: int
+    total_questions: int
+    passed: bool
+    correct_count: int
+    incorrect_count: int
+    details: dict  # question_id -> {correct: bool, correct_answer: str, explanation: str}
+
+
 class MilestoneStatusRead(BaseModel):
     id: int
     milestone_number: int
@@ -89,6 +143,9 @@ class MilestoneStatusRead(BaseModel):
     description: Optional[str] = None
     estimated_days: int
     status: str
+
+    class Config:
+        from_attributes = True
 
 
 class TrainingPlanRead(BaseModel):

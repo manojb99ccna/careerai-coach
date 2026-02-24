@@ -249,11 +249,18 @@ function TrainingPage() {
                 return (
                   <li
                     key={milestone.id}
-                    className="list-group-item d-flex justify-content-between align-items-start"
+                    className={`list-group-item d-flex justify-content-between align-items-start list-group-item-action ${milestone.status === 'locked' ? 'bg-light text-muted' : ''}`}
+                    style={{ cursor: milestone.status === 'locked' ? 'not-allowed' : 'pointer' }}
+                    onClick={() => {
+                      if (milestone.status !== 'locked') {
+                        navigate(`/training/milestones/${milestone.id}`)
+                      }
+                    }}
                   >
                     <div className="me-3">
                       <div className="fw-semibold">
                         {milestone.milestone_number}. {milestone.title}
+                        {milestone.status === 'locked' && <i className="bi bi-lock-fill ms-2"></i>}
                       </div>
                       {milestone.description && (
                         <div className="text-muted small mt-1">{milestone.description}</div>
