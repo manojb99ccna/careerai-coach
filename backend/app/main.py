@@ -148,15 +148,15 @@ def _call_ollama_for_training_plan(role_name: str, experience_level_name: str, s
         "- The first milestone must focus on foundations / absolute basics.\n"
         "- The last milestone must focus on production, deployment, portfolio, and real-world projects.\n"
         "- Each milestone MUST have these fields:\n"
-        "  - title: short, professional (3–6 words).\n"
-        "  - description: 1–2 sentences explaining career importance.\n"
+        "  - title: short, professional (3-6 words).\n"
+        "  - description: 1-2 sentences explaining career importance.\n"
         "  - estimated_days: integer between 5 and 21.\n"
         "  - study_materials: an array with EXACTLY 5 to 10 items.\n"
         "    Each study material item must have:\n"
         "      - title: short descriptive text.\n"
         "      - type: one of markdown, text, link, video_embed, pdf.\n"
         "      - content: short text, URL, or embed code/description.\n"
-        "  - practice_guidelines: 2–4 sentences describing how to practice.\n"
+        "  - practice_guidelines: 2-4 sentences describing how to practice.\n"
         "  - quiz_questions: EXACTLY 60 questions.\n"
         "    Difficulty distribution per milestone:\n"
         "      - 20 with difficulty \"easy\".\n"
@@ -1014,37 +1014,66 @@ def get_milestone_questions(
 
     # Get random questions
     # Note: simple random order. For production, use func.random()
-    query = (
-        db.query(models.MasterQuizQuestion)
-        .filter(models.MasterQuizQuestion.master_milestone_id == milestone_id)
-        .order_by(func.random())
-    )
-
-    limit = 10 if mode == "practice" else 20
-    questions = query.limit(limit).all()
-
-    result = []
-    for q in questions:
-        # Hide correct answer if quiz mode?
-        # User requirement: "Quiz section (20 questions + submit + score + pass/fail)"
-        # If we send correct answer, user can cheat easily.
-        # But for "Practice", "immediate feedback" implies client needs to know.
-        
-        correct = q.correct_answer if mode == "practice" else None
-        explanation = q.explanation if mode == "practice" else None
-        
-        result.append(
-            schemas.QuizQuestionRead(
-                id=q.id,
-                question_text=q.question_text,
-                question_type=q.question_type,
-                difficulty=q.difficulty,
-                options=json.loads(q.options) if isinstance(q.options, str) else q.options,
-                correct_answer=correct,
-                explanation=explanation,
-            )
+    try:
+        query = (
+            db.query(models.MasterQuizQuestion)
+            .filter(models.MasterQuizQuestion.master_milestone_id == milestone_id)
+            .order_by(func.random())
         )
-    return result
+
+        limit = 10 if mode == "practice" else 20
+        questions = query.limit(limit).all()
+
+        result = []
+        for q in questions:
+            # Hide correct answer if quiz mode?
+            # User requirement: "Quiz section (20 questions + submit + score + pass/fail)"
+            # If we send correct answer, user can cheat easily.
+            # But for "Practice", "immediate feedback" implies client needs to know.
+            
+            correct = q.correct_answer if mode == "practice" else None
+            explanation = q.explanation if mode == "practice" else None
+            
+            try:
+                options_data = json.loads(q.options) if isinstance(q.options, str) else q.options
+            except json.JSONDecodeError:
+                print(f"Error decoding options for question {q.id}: {q.options}")
+                options_data = {} # Fallback
+
+            if isinstance(options_data, list):
+                parsed_options = {}
+                all_parsed = True
+                for item in options_data:
+                    parts = str(item).split(".", 1)
+                    if len(parts) == 2 and len(parts[0].strip()) == 1 and parts[0].strip().isalpha():
+                        parsed_options[parts[0].strip()] = parts[1].strip()
+                    else:
+                        all_parsed = False
+                        break
+                
+                if all_parsed:
+                    options_data = parsed_options
+                else:
+                    # Fallback to A, B, C, D
+                    options_data = {chr(65 + i): str(item) for i, item in enumerate(options_data)}
+
+            result.append(
+                schemas.QuizQuestionRead(
+                    id=q.id,
+                    question_text=q.question_text,
+                    question_type=q.question_type,
+                    difficulty=q.difficulty,
+                    options=options_data,
+                    correct_answer=correct,
+                    explanation=explanation,
+                )
+            )
+        return result
+    except Exception as e:
+        print(f"Error in get_milestone_questions: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 
 @app.post("/training/milestones/{milestone_id}/quiz/submit", response_model=schemas.QuizResult)
