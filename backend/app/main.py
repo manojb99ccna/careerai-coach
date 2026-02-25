@@ -215,7 +215,54 @@ def _call_ollama_for_training_plan(role_name: str, experience_level_name: str, s
         )
 
 
-def _generate_milestone_content(milestone_title: str, milestone_desc: str, role: str, level: str) -> dict:
+def _save_milestone_content(db: Session, milestone: models.MasterMilestone, processed_content: dict):
+    # Idempotency: Delete existing content for this milestone
+    db.query(models.MasterStudyMaterial).filter(models.MasterStudyMaterial.master_milestone_id == milestone.id).delete()
+    db.query(models.MasterQuizQuestion).filter(models.MasterQuizQuestion.master_milestone_id == milestone.id).delete()
+    db.flush()
+
+    # Save materials
+    for material in processed_content.get("study_materials", []):
+        db.add(
+            models.MasterStudyMaterial(
+                master_milestone_id=milestone.id,
+                content_type=material["type"],
+                title=material["title"],
+                short_description=material["short_description"],
+                content=material["content"],
+                sort_order=material.get("sort_order", 0),
+            )
+        )
+        
+    # Save questions
+    for question in processed_content.get("quiz_questions", []):
+        db.add(
+            models.MasterQuizQuestion(
+                master_milestone_id=milestone.id,
+                question_text=question["text"],
+                question_type="multiple_choice",
+                difficulty=question["difficulty"],
+                options=json.dumps(question["options"]),
+                correct_answer=question["correct"],
+                explanation=question["explanation"],
+            )
+        )
+    
+    milestone.is_content_generated = True
+    db.add(milestone)
+
+
+def _generate_milestone_content(milestone_title: str, milestone_desc: str, role: str, level: str, question_count: int = 5) -> dict:
+    # Calculate difficulty distribution
+    if question_count < 3:
+        easy_count = question_count
+        medium_count = 0
+        hard_count = 0
+    else:
+        easy_count = int(question_count * 0.4)
+        medium_count = int(question_count * 0.4)
+        hard_count = question_count - easy_count - medium_count
+
     prompt = (
         "You are an expert AI career coach creating detailed study content for a specific milestone.\n"
         f"Milestone Title: {milestone_title}\n"
@@ -259,11 +306,11 @@ def _generate_milestone_content(milestone_title: str, milestone_desc: str, role:
         "        Content MUST be well-structured and suitable for self-learning.\n"
         "        Do NOT make content too short.\n"
         "        Do NOT omit flow explanation or example.\n"
-        "2. quiz_questions: EXACTLY 5 questions.\n"
+        f"2. quiz_questions: EXACTLY {question_count} questions.\n"
         "    Difficulty distribution per milestone:\n"
-        "      - 2 with difficulty \"easy\".\n"
-        "      - 2 with difficulty \"medium\".\n"
-        "      - 1 with difficulty \"hard\".\n"
+        f"      - {easy_count} with difficulty \"easy\".\n"
+        f"      - {medium_count} with difficulty \"medium\".\n"
+        f"      - {hard_count} with difficulty \"hard\".\n"
         "    Each quiz question must have:\n"
         "      - text: the question text.\n"
         "      - options: array of four options formatted as\n"
@@ -432,7 +479,7 @@ def _validate_training_plan_payload(data: dict) -> List[dict]:
     return validated
 
 
-def _process_milestone_content(data: dict, milestone_title: str) -> dict:
+def _process_milestone_content(data: dict, milestone_title: str, question_count: int = 5) -> dict:
     study_materials = data.get("study_materials") or []
     if not isinstance(study_materials, list):
         study_materials = []
@@ -551,8 +598,8 @@ def _process_milestone_content(data: dict, milestone_title: str) -> dict:
             }
         )
 
-    # Ensure at least 5 questions
-    while len(base_questions) < 5:
+    # Ensure at least question_count questions
+    while len(base_questions) < question_count:
         idx = len(base_questions) + 1
         base_questions.append(_generate_filler_question(milestone_title, "medium", idx))
 
@@ -943,43 +990,23 @@ def get_milestone_detail(
                 level = db.query(models.ExperienceLevel).filter(models.ExperienceLevel.id == plan.experience_level_id).first()
                 
                 if role and level:
+                    # Fetch settings
+                    settings = db.query(models.MilestoneSettings).filter(models.MilestoneSettings.is_active.is_(True)).first()
+                    quiz_count = 5
+                    if settings:
+                         quiz_count = settings.quiz_questions_total + settings.practice_questions_total
+
                     raw_content = _generate_milestone_content(
                         master_milestone.title,
                         master_milestone.description,
                         role.name,
-                        level.name
+                        level.name,
+                        question_count=quiz_count
                     )
                     
-                    processed = _process_milestone_content(raw_content, master_milestone.title)
+                    processed = _process_milestone_content(raw_content, master_milestone.title, question_count=quiz_count)
                     
-                    # Save materials
-                    for material in processed.get("study_materials", []):
-                        db.add(
-                            models.MasterStudyMaterial(
-                                master_milestone_id=master_milestone.id,
-                                content_type=material["type"],
-                                title=material["title"],
-                                short_description=material["short_description"],
-                                content=material["content"],
-                                sort_order=material.get("sort_order", 0),
-                            )
-                        )
-                        
-                    # Save questions
-                    for question in processed.get("quiz_questions", []):
-                        db.add(
-                            models.MasterQuizQuestion(
-                                master_milestone_id=master_milestone.id,
-                                question_text=question["text"],
-                                question_type="multiple_choice",
-                                difficulty=question["difficulty"],
-                                options=json.dumps(question["options"]),
-                                correct_answer=question["correct"],
-                                explanation=question["explanation"],
-                            )
-                        )
-                        
-                    master_milestone.is_content_generated = True
+                    _save_milestone_content(db, master_milestone, processed)
                     db.commit()
                     db.refresh(master_milestone)
         except Exception as e:
@@ -1184,13 +1211,24 @@ def get_milestone_questions(
     # Get random questions
     # Note: simple random order. For production, use func.random()
     try:
+        # Fetch settings for limits
+        settings = db.query(models.MilestoneSettings).filter(models.MilestoneSettings.is_active.is_(True)).first()
+        limit = 20  # Default for quiz
+        if mode == "practice":
+            limit = 10  # Default for practice
+        
+        if settings:
+            if mode == "practice":
+                limit = settings.practice_questions_total
+            else:
+                limit = settings.quiz_questions_total
+
         query = (
             db.query(models.MasterQuizQuestion)
             .filter(models.MasterQuizQuestion.master_milestone_id == milestone_id)
             .order_by(func.random())
         )
 
-        limit = 10 if mode == "practice" else 20
         questions = query.limit(limit).all()
 
         result = []
@@ -1321,15 +1359,26 @@ def submit_quiz(
             "explanation": question.explanation
         }
 
-    total = correct_count + incorrect_count
-    score_percent = int((correct_count / total) * 100) if total > 0 else 0
+    total_answered = correct_count + incorrect_count
+    
+    # Fetch settings to determine expected total questions
+    settings = db.query(models.MilestoneSettings).filter(models.MilestoneSettings.is_active.is_(True)).first()
+    expected_total = 20
+    if settings:
+        expected_total = settings.quiz_questions_total
+        
+    # Use max to ensure we don't divide by a smaller number if user somehow answered more, 
+    # but primarily to penalize partial submissions against the expected total.
+    final_total = max(expected_total, total_answered)
+    
+    score_percent = int((correct_count / final_total) * 100) if final_total > 0 else 0
     passed = score_percent >= 70  # Pass threshold
 
     # Record attempt
     attempt = models.UserQuizAttempt(
         user_milestone_progress_id=progress.id,
         score=score_percent,
-        total_questions=total,
+        total_questions=final_total,
         passed=passed,
     )
     db.add(attempt)
@@ -1370,7 +1419,7 @@ def submit_quiz(
 
     return schemas.QuizResult(
         score=score_percent,
-        total_questions=total,
+        total_questions=final_total,
         passed=passed,
         correct_count=correct_count,
         incorrect_count=incorrect_count,
@@ -1481,43 +1530,23 @@ def maintain_milestones(
                 if not role or not level:
                     continue
 
+                # Fetch settings
+                settings = db.query(models.MilestoneSettings).filter(models.MilestoneSettings.is_active.is_(True)).first()
+                quiz_count = 5
+                if settings:
+                        quiz_count = settings.quiz_questions_total + settings.practice_questions_total
+
                 raw_content = _generate_milestone_content(
                     milestone.title,
                     milestone.description,
                     role.name,
-                    level.name
+                    level.name,
+                    question_count=quiz_count
                 )
                 
-                processed = _process_milestone_content(raw_content, milestone.title)
+                processed = _process_milestone_content(raw_content, milestone.title, question_count=quiz_count)
                 
-                # Save materials
-                for material in processed.get("study_materials", []):
-                    db.add(
-                        models.MasterStudyMaterial(
-                            master_milestone_id=milestone.id,
-                            content_type=material["type"],
-                            title=material["title"],
-                            short_description=material["short_description"],
-                            content=material["content"],
-                            sort_order=material.get("sort_order", 0),
-                        )
-                    )
-                    
-                # Save questions
-                for question in processed.get("quiz_questions", []):
-                    db.add(
-                        models.MasterQuizQuestion(
-                            master_milestone_id=milestone.id,
-                            question_text=question["text"],
-                            question_type="multiple_choice",
-                            difficulty=question["difficulty"],
-                            options=json.dumps(question["options"]),
-                            correct_answer=question["correct"],
-                            explanation=question["explanation"],
-                        )
-                    )
-                    
-                milestone.is_content_generated = True
+                _save_milestone_content(db, milestone, processed)
                 
                 # Update job log success count
                 job_log.success_count += 1

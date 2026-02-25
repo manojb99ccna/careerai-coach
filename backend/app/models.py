@@ -174,3 +174,14 @@ class SystemJobLog(Base):
     failure_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MilestoneSettings(Base):
+    __tablename__ = "milestone_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    quiz_questions_total = Column(Integer, nullable=False, default=40)
+    practice_questions_total = Column(Integer, nullable=False, default=10)
+    is_active = Column(Boolean, nullable=False, server_default="1")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
