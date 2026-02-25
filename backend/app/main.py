@@ -2,6 +2,8 @@ from typing import Generator, List, Optional
 
 import base64
 import json
+import random
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 from urllib import error as urllib_error
@@ -104,7 +106,7 @@ def get_current_user_id(authorization: str = Header(..., alias="Authorization"))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user id in token")
 
 
-app = FastAPI(title="CareerAI Coach Backend")
+app = FastAPI(title="CareerAI Coach Backend", debug=True)
 
 
 app.mount("/media", StaticFiles(directory=str(MEDIA_ROOT)), name="media")
@@ -144,60 +146,25 @@ def _call_ollama_for_training_plan(role_name: str, experience_level_name: str, s
         f"Experience level: {experience_level_name}\n"
         f"Current skills: {skills_text}\n\n"
         "Strict rules for the JSON you must output:\n"
-        "- Generate EXACTLY 6 to 8 milestones (no more, no less).\n"
+        "- Generate EXACTLY 3 to 5 milestones.\n"
         "- The first milestone must focus on foundations / absolute basics.\n"
         "- The last milestone must focus on production, deployment, portfolio, and real-world projects.\n"
         "- Each milestone MUST have these fields:\n"
         "  - title: short, professional (3-6 words).\n"
-        "  - description: 1-2 sentences explaining career importance.\n"
-        "  - estimated_days: integer between 5 and 21.\n"
-        "  - study_materials: an array with EXACTLY 5 to 10 items.\n"
-        "    Each study material item must have:\n"
-        "      - title: short descriptive text.\n"
-        "      - type: one of markdown, text, link, video_embed, pdf.\n"
-        "      - content: short text, URL, or embed code/description.\n"
-        "  - practice_guidelines: 2-4 sentences describing how to practice.\n"
-        "  - quiz_questions: EXACTLY 60 questions.\n"
-        "    Difficulty distribution per milestone:\n"
-        "      - 20 with difficulty \"easy\".\n"
-        "      - 25 with difficulty \"medium\".\n"
-        "      - 15 with difficulty \"hard\".\n"
-        "    Each quiz question must have:\n"
-        "      - text: the question text.\n"
-        "      - options: array of four options formatted as\n"
-        "        [\"A. ...\", \"B. ...\", \"C. ...\", \"D. ...\"].\n"
-        "      - correct: one of \"A\", \"B\", \"C\", or \"D\".\n"
-        "      - explanation: 2–4 sentences explaining the answer.\n"
-        "      - difficulty: \"easy\", \"medium\", or \"hard\".\n\n"
+        "  - description: 1-2 sentences summarizing what will be studied in this milestone.\n"
+        "  - estimated_days: integer between 5 and 21.\n\n"
         "Output ONLY valid JSON with this exact structure:\n"
         "{\n"
         '  \"milestones\": [\n'
         "    {\n"
         '      \"title\": \"...\",\n'
         '      \"description\": \"...\",\n'
-        '      \"estimated_days\": 10,\n'
-        '      \"study_materials\": [\n'
-        "        {\n"
-        '          \"title\": \"...\",\n'
-        '          \"type\": \"markdown\",\n'
-        '          \"content\": \"...\"\n'
-        "        }\n"
-        "      ],\n"
-        '      \"practice_guidelines\": \"...\",\n'
-        '      \"quiz_questions\": [\n'
-        "        {\n"
-        '          \"text\": \"...\",\n'
-        '          \"options\": [\"A. ...\", \"B. ...\", \"C. ...\", \"D. ...\"],\n'
-        '          \"correct\": \"A\",\n'
-        '          \"explanation\": \"...\",\n'
-        '          \"difficulty\": \"easy\"\n'
-        "        }\n"
-        "      ]\n"
+        '      \"estimated_days\": 10\n'
         "    }\n"
         "  ]\n"
         "}\n"
         "Do NOT include any markdown formatting or code blocks. Output ONLY the raw JSON string.\n"
-        "IMPORTANT: The array 'milestones' must contain AT LEAST 6 items and AT MOST 8 items."
+        "IMPORTANT: The array 'milestones' must contain AT LEAST 3 items and AT MOST 8 items."
     )
 
     payload = {"model": "llama3", "prompt": prompt, "stream": False, "format": "json"}
@@ -235,31 +202,159 @@ def _call_ollama_for_training_plan(role_name: str, experience_level_name: str, s
 
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        print(f"Failed to parse JSON. Raw text: {text[:500]}...")
+    except json.JSONDecodeError as e:
+        print("FAILED TO PARSE JSON FROM AI.")
+        print(f"ERROR: {e}")
+        print("RAW TEXT START:")
+        print(text[:2000])
+        print("RAW TEXT END:")
+        print(text[-2000:])
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AI did not return valid JSON for training plan",
+            detail=f"AI did not return valid JSON. Error: {str(e)}",
         )
+
+
+def _generate_milestone_content(milestone_title: str, milestone_desc: str, role: str, level: str) -> dict:
+    prompt = (
+        "You are an expert AI career coach creating detailed study content for a specific milestone.\n"
+        f"Milestone Title: {milestone_title}\n"
+        f"Milestone Description: {milestone_desc}\n"
+        f"Target Role: {role}\n"
+        f"Experience Level: {level}\n\n"
+        "Strict rules for the JSON you must output:\n"
+        "1. study_materials: an array with EXACTLY 2 to 3 items.\n"
+        "    Each study material item must have:\n"
+        "      - title: short descriptive text.\n"
+        "      - type: one of markdown, text, link, video_embed, pdf.\n"
+        "      - short_description: MUST be a clear, beginner-friendly definition in simple terms.\n"
+        "        Rules:\n"
+        "        - Define the concept like a textbook definition.\n"
+        "        - Explain what it is, how it works, and why it is used.\n"
+        "        - Use simple language suitable for beginners.\n"
+        "        - Length: 1–2 sentences only.\n"
+        "        - Example style: 'Supervised Learning trains a model using labeled data to predict correct outputs.'\n"
+        "      - content: MUST be full, detailed study material written in structured learning format.\n"
+        "        Content MUST include ALL of the following sections:\n"
+        "        1. Concept Explanation:\n"
+        "           - Detailed explanation in beginner-friendly language.\n"
+        "           - Explain purpose, how it works, and when it is used.\n"
+        "        2. Flow Explanation (REQUIRED):\n"
+        "           - Provide step-by-step flow using arrow format like:\n"
+        "             Input Data + Correct Answers\n"
+        "             ↓\n"
+        "             Train Model\n"
+        "             ↓\n"
+        "             Model Learns Patterns\n"
+        "             ↓\n"
+        "             Predict New Data\n"
+        "        3. Real-world Example (REQUIRED):\n"
+        "           - Provide at least one real-world example.\n"
+        "           - Example must be practical and beginner understandable.\n"
+        "        4. Optional Flow Diagram (IMPORTANT):\n"
+        "           - If possible, include a visual-style flow representation using arrows, blocks, or steps.\n"
+        "           - Use text-based flow diagram format suitable for markdown display.\n"
+        "        5. Key Points Summary:\n"
+        "           - Provide 3–5 bullet points summarizing key ideas.\n"
+        "        Content MUST be well-structured and suitable for self-learning.\n"
+        "        Do NOT make content too short.\n"
+        "        Do NOT omit flow explanation or example.\n"
+        "2. quiz_questions: EXACTLY 5 questions.\n"
+        "    Difficulty distribution per milestone:\n"
+        "      - 2 with difficulty \"easy\".\n"
+        "      - 2 with difficulty \"medium\".\n"
+        "      - 1 with difficulty \"hard\".\n"
+        "    Each quiz question must have:\n"
+        "      - text: the question text.\n"
+        "      - options: array of four options formatted as\n"
+        "        [\"A. ...\", \"B. ...\", \"C. ...\", \"D. ...\"].\n"
+        "      - correct: one of \"A\", \"B\", \"C\", or \"D\". IMPORTANT: Randomize the correct answer (do not always make it A).\n"
+        "      - explanation: 2–4 sentences explaining the answer.\n"
+        "      - difficulty: \"easy\", \"medium\", or \"hard\".\n\n"
+        "Output ONLY valid JSON with this exact structure:\n"
+        "{\n"
+        '  \"study_materials\": [\n'
+        "    {\n"
+        '      \"title\": \"...\",\n'
+        '      \"type\": \"markdown\",\n'
+        '      \"short_description\": \"...\",\n'
+        '      \"content\": \"...\"\n'
+        "    }\n"
+        "  ],\n"
+        '  \"quiz_questions\": [\n'
+        "    {\n"
+        '      \"text\": \"...\",\n'
+        '      \"options\": [\"A. ...\", \"B. ...\", \"C. ...\", \"D. ...\"],\n'
+        '      \"correct\": \"A\",\n'
+        '      \"explanation\": \"...\",\n'
+        '      \"difficulty\": \"easy\"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Do NOT include any markdown formatting or code blocks. Output ONLY the raw JSON string."
+    )
+
+    payload = {"model": "llama3", "prompt": prompt, "stream": False, "format": "json"}
+    data = json.dumps(payload).encode("utf-8")
+    request_obj = urllib_request.Request(
+        f"{OLLAMA_BASE_URL}/api/generate",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request_obj, timeout=600) as response:
+            body = response.read().decode("utf-8")
+    except urllib_error.URLError:
+        print("Ollama connection failed")
+        return {}
+
+    try:
+        raw = json.loads(body)
+        text = raw.get("response") or raw.get("text") or ""
+        start_index = text.find("{")
+        end_index = text.rfind("}")
+        if start_index != -1 and end_index != -1:
+            text = text[start_index : end_index + 1]
+        return json.loads(text)
+    except Exception as e:
+        print(f"Error parsing AI content: {e}")
+        return {}
 
 
 def _generate_filler_question(milestone_title: str, difficulty: str, index: int) -> dict:
     label = difficulty.capitalize()
     text = f"{label} practice question {index} for {milestone_title}"
-    options = [
-        "A. Concept is correct",
-        "B. Concept is partially correct",
-        "C. Concept is incorrect",
-        "D. It depends on context",
+    base_options = [
+        "Concept is correct",
+        "Concept is partially correct",
+        "Concept is incorrect",
+        "It depends on context",
     ]
+    random.shuffle(base_options)
+    
+    # Let's arbitrarily say "Concept is correct" is the right answer text for this filler
+    correct_text = "Concept is correct"
+    try:
+        correct_idx = base_options.index(correct_text)
+    except ValueError:
+        correct_idx = 0
+        
+    correct_char = chr(65 + correct_idx)
+    
+    final_options = []
+    for i, opt in enumerate(base_options):
+        prefix = chr(65 + i)
+        final_options.append(f"{prefix}. {opt}")
+        
     explanation = (
         f"This is a synthetic {difficulty} question to reinforce {milestone_title}. "
-        "Option A reflects the correct core idea."
+        f"Option {correct_char} reflects the correct core idea."
     )
     return {
         "text": text,
-        "options": options,
-        "correct": "A",
+        "options": final_options,
+        "correct": correct_char,
         "explanation": explanation,
         "difficulty": difficulty,
     }
@@ -269,38 +364,49 @@ def _generate_filler_study_material(milestone_title: str, index: int) -> dict:
     return {
         "title": f"Recommended Reading {index} for {milestone_title}",
         "type": "text",
-        "content": f"Please research core concepts of {milestone_title} to build a strong foundation. Focus on official documentation and community best practices.",
+        "short_description": f"{milestone_title} is a key concept that enables scalable solutions in this domain.",
+        "content": (
+            f"### 1. Concept Explanation\n"
+            f"Please research core concepts of {milestone_title} to build a strong foundation. "
+            "It is widely used in industry to solve complex problems.\n\n"
+            "### 2. Flow Explanation\n"
+            "Concept -> Implementation -> Optimization -> Deployment\n\n"
+            "### 3. Real-world Example\n"
+            f"Many companies use {milestone_title} to improve efficiency by 50%.\n\n"
+            "### 4. Key Points Summary\n"
+            "- Core foundation\n"
+            "- Industry standard\n"
+            "- Scalable approach"
+        ),
     }
 
 
 def _validate_training_plan_payload(data: dict) -> List[dict]:
     milestones = data.get("milestones")
     if not isinstance(milestones, list):
+        print(f"VALIDATION ERROR: milestones is not a list. Data: {json.dumps(data, indent=2)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="AI plan missing milestones list")
 
     count = len(milestones)
-    if count < 6 or count > 8:
+    if count < 3 or count > 8:
+        print(f"VALIDATION ERROR: Milestone count {count} is invalid (expected 3-8).")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AI plan must contain between 6 and 8 milestones",
+            detail=f"AI plan must contain between 3 and 8 milestones (received {count})",
         )
 
     validated: List[dict] = []
 
     for index, milestone in enumerate(milestones, start=1):
         if not isinstance(milestone, dict):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Milestone entry is not an object"
-            )
+            continue
 
         title = str(milestone.get("title") or "").strip()
         description = str(milestone.get("description") or "").strip()
         estimated_days_raw = milestone.get("estimated_days")
 
         if not title:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Milestone title is required"
-            )
+            title = f"Milestone {index}"
 
         try:
             estimated_days = int(estimated_days_raw)
@@ -312,146 +418,148 @@ def _validate_training_plan_payload(data: dict) -> List[dict]:
         if estimated_days > 21:
             estimated_days = 21
 
-        study_materials = milestone.get("study_materials") or []
-        if not isinstance(study_materials, list):
-            study_materials = []
-        
-        # Ensure at most 10 items
-        if len(study_materials) > 10:
-            study_materials = study_materials[:10]
-            
-        # Ensure at least 5 items
-        while len(study_materials) < 5:
-            index = len(study_materials) + 1
-            study_materials.append(_generate_filler_study_material(title, index))
-
-        normalized_materials = []
-        for idx, item in enumerate(study_materials, start=1):
-            if not isinstance(item, dict):
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Study material entry is not an object",
-                )
-            material_title = str(item.get("title") or "").strip()
-            material_type = str(item.get("type") or "markdown").strip()
-            material_content = str(item.get("content") or "").strip()
-            
-            # If content is empty for non-markdown types, provide a default
-            if not material_content:
-                material_content = f"Review official documentation for {material_title}"
-
-            if material_type not in {"markdown", "text", "link", "video_embed", "pdf"}:
-                material_type = "markdown"
-
-            normalized_materials.append(
-                {
-                    "title": material_title,
-                    "type": material_type,
-                    "content": material_content,
-                    "sort_order": idx,
-                }
-            )
-
-        practice_guidelines = str(milestone.get("practice_guidelines") or "").strip()
-
-        quiz_questions_raw = milestone.get("quiz_questions") or []
-        if not isinstance(quiz_questions_raw, list):
-            quiz_questions_raw = []
-
-        base_questions = []
-        for question in quiz_questions_raw:
-            if not isinstance(question, dict):
-                continue
-
-            text = str(question.get("text") or "").strip()
-            options = question.get("options") or []
-            if not isinstance(options, list):
-                options = []
-            normalized_options = [str(opt) for opt in options]
-            while len(normalized_options) < 4:
-                normalized_options.append(f"Option {len(normalized_options) + 1}")
-            if len(normalized_options) > 4:
-                normalized_options = normalized_options[:4]
-
-            correct = str(question.get("correct") or "").strip().upper()
-            if correct not in {"A", "B", "C", "D"}:
-                correct = "A"
-            explanation = str(question.get("explanation") or "").strip()
-            difficulty = str(question.get("difficulty") or "").strip().lower()
-            if difficulty not in {"easy", "medium", "hard"}:
-                difficulty = "medium"
-
-            base_questions.append(
-                {
-                    "text": text,
-                    "options": normalized_options,
-                    "correct": correct,
-                    "explanation": explanation,
-                    "difficulty": difficulty,
-                }
-            )
-
-        easy_questions = []
-        medium_questions = []
-        hard_questions = []
-        for q in base_questions:
-            if q["difficulty"] == "easy":
-                easy_questions.append(q)
-            elif q["difficulty"] == "hard":
-                hard_questions.append(q)
-            else:
-                medium_questions.append(q)
-
-        final_questions: List[dict] = []
-
-        def take_questions(source_lists, remaining: int, target_difficulty: str) -> int:
-            while remaining > 0:
-                non_empty = [(name, lst) for name, lst in source_lists if lst]
-                if not non_empty:
-                    break
-                non_empty.sort(key=lambda item: len(item[1]), reverse=True)
-                name, lst = non_empty[0]
-                q = lst.pop(0)
-                q["difficulty"] = target_difficulty
-                final_questions.append(q)
-                remaining -= 1
-            return remaining
-
-        sources = [("easy", easy_questions), ("medium", medium_questions), ("hard", hard_questions)]
-
-        remaining_easy = 20
-        remaining_medium = 25
-        remaining_hard = 15
-
-        remaining_easy = take_questions(sources, remaining_easy, "easy")
-        remaining_medium = take_questions(sources, remaining_medium, "medium")
-        remaining_hard = take_questions(sources, remaining_hard, "hard")
-
-        for _ in range(remaining_easy):
-            index = len(final_questions) + 1
-            final_questions.append(_generate_filler_question(title, "easy", index))
-        for _ in range(remaining_medium):
-            index = len(final_questions) + 1
-            final_questions.append(_generate_filler_question(title, "medium", index))
-        for _ in range(remaining_hard):
-            index = len(final_questions) + 1
-            final_questions.append(_generate_filler_question(title, "hard", index))
-
-        if len(final_questions) > 60:
-            final_questions = final_questions[:60]
-
         validated.append(
             {
                 "title": title,
                 "description": description,
                 "estimated_days": estimated_days,
-                "study_materials": normalized_materials,
-                "practice_guidelines": practice_guidelines,
-                "quiz_questions": final_questions,
+                "study_materials": [],
+                "quiz_questions": [],
+                "practice_guidelines": "",
             }
         )
 
     return validated
+
+
+def _process_milestone_content(data: dict, milestone_title: str) -> dict:
+    study_materials = data.get("study_materials") or []
+    if not isinstance(study_materials, list):
+        study_materials = []
+    
+    # Ensure at most 10 items
+    if len(study_materials) > 10:
+        study_materials = study_materials[:10]
+        
+    # Ensure at least 2 items (relaxed from 5)
+    while len(study_materials) < 2:
+        index = len(study_materials) + 1
+        study_materials.append(_generate_filler_study_material(milestone_title, index))
+
+    normalized_materials = []
+    for idx, item in enumerate(study_materials, start=1):
+        if not isinstance(item, dict):
+            continue
+        material_title = str(item.get("title") or "").strip()
+        material_type = str(item.get("type") or "markdown").strip()
+        material_short_desc = str(item.get("short_description") or "").strip()
+        material_content = str(item.get("content") or "").strip()
+        
+        # If content is empty for non-markdown types, provide a default
+        if not material_content:
+            material_content = f"Review official documentation for {material_title}"
+
+        if not material_short_desc:
+            material_short_desc = f"Learn about {material_title}"
+
+        if material_type not in {"markdown", "text", "link", "video_embed", "pdf"}:
+            material_type = "markdown"
+
+        normalized_materials.append(
+            {
+                "title": material_title,
+                "type": material_type,
+                "short_description": material_short_desc,
+                "content": material_content,
+                "sort_order": idx,
+            }
+        )
+
+    quiz_questions_raw = data.get("quiz_questions") or []
+    if not isinstance(quiz_questions_raw, list):
+        quiz_questions_raw = []
+
+    base_questions = []
+    for question in quiz_questions_raw:
+        if not isinstance(question, dict):
+            continue
+
+        text = str(question.get("text") or "").strip()
+        options = question.get("options") or []
+        if not isinstance(options, list):
+            options = []
+        normalized_options = [str(opt) for opt in options]
+        while len(normalized_options) < 4:
+            normalized_options.append(f"Option {len(normalized_options) + 1}")
+        if len(normalized_options) > 4:
+            normalized_options = normalized_options[:4]
+
+        correct = str(question.get("correct") or "").strip().upper()
+        if correct not in {"A", "B", "C", "D"}:
+            correct = "A"
+        
+        # Shuffle logic:
+        # 1. Identify current correct option text
+        correct_idx = ord(correct) - 65 # 0 for A, 1 for B...
+        if correct_idx >= len(normalized_options) or correct_idx < 0:
+            correct_idx = 0
+        
+        # Extract text from options (remove A., B. prefix if present)
+        clean_options = []
+        for opt in normalized_options:
+            parts = opt.split(".", 1)
+            if len(parts) > 1 and parts[0].strip().isalpha() and len(parts[0].strip()) == 1:
+                clean_options.append(parts[1].strip())
+            else:
+                clean_options.append(opt)
+        
+        correct_text = clean_options[correct_idx]
+
+        # 2. Shuffle
+        indices = list(range(len(clean_options)))
+        random.shuffle(indices)
+        
+        shuffled_options_text = [clean_options[i] for i in indices]
+        
+        # 3. Find new correct index
+        try:
+            new_correct_idx = shuffled_options_text.index(correct_text)
+        except ValueError:
+            # Fallback if logic fails (e.g. duplicate options)
+            new_correct_idx = 0 
+        
+        new_correct_char = chr(65 + new_correct_idx)
+        
+        # 4. Reconstruct options with A, B, C, D
+        final_options_list = []
+        for i, txt in enumerate(shuffled_options_text):
+            prefix = chr(65 + i)
+            final_options_list.append(f"{prefix}. {txt}")
+
+        explanation = str(question.get("explanation") or "").strip()
+        difficulty = str(question.get("difficulty") or "").strip().lower()
+        if difficulty not in {"easy", "medium", "hard"}:
+            difficulty = "medium"
+
+        base_questions.append(
+            {
+                "text": text,
+                "options": final_options_list,
+                "correct": new_correct_char,
+                "explanation": explanation,
+                "difficulty": difficulty,
+            }
+        )
+
+    # Ensure at least 5 questions
+    while len(base_questions) < 5:
+        idx = len(base_questions) + 1
+        base_questions.append(_generate_filler_question(milestone_title, "medium", idx))
+
+    return {
+        "study_materials": normalized_materials,
+        "quiz_questions": base_questions
+    }
 
 
 @app.get("/meta/roles", response_model=List[schemas.RoleRead])
@@ -692,57 +800,64 @@ def generate_training_plan(
     )
 
     if training_plan is None:
-        raw_plan = _call_ollama_for_training_plan(role.name, experience_level.name, payload.skills)
-        milestones = _validate_training_plan_payload(raw_plan)
+        try:
+            raw_plan = _call_ollama_for_training_plan(role.name, experience_level.name, payload.skills)
+            milestones = _validate_training_plan_payload(raw_plan)
 
-        training_plan = models.TrainingPlan(
-            role_id=role.id,
-            experience_level_id=experience_level.id,
-            title=f"{role.name} - {experience_level.name} Training Plan",
-            description="AI-generated training plan based on your role, experience level, and skills.",
-            is_generated=True,
-        )
-        db.add(training_plan)
-        db.commit()
-        db.refresh(training_plan)
-
-        for index, milestone in enumerate(milestones, start=1):
-            master_milestone = models.MasterMilestone(
-                training_plan_id=training_plan.id,
-                milestone_number=index,
-                title=milestone["title"],
-                description=milestone["description"],
-                estimated_days=milestone["estimated_days"],
-                sort_order=index,
+            training_plan = models.TrainingPlan(
+                role_id=role.id,
+                experience_level_id=experience_level.id,
+                title=f"{role.name} - {experience_level.name} Training Plan",
+                description="AI-generated training plan based on your role, experience level, and skills.",
+                is_generated=True,
             )
-            db.add(master_milestone)
-            db.flush()
+            db.add(training_plan)
+            db.commit()
+            db.refresh(training_plan)
 
-            for material in milestone["study_materials"]:
-                db.add(
-                    models.MasterStudyMaterial(
-                        master_milestone_id=master_milestone.id,
-                        content_type=material["type"],
-                        title=material["title"],
-                        content=material["content"],
-                        sort_order=material["sort_order"],
-                    )
+            for index, milestone in enumerate(milestones, start=1):
+                master_milestone = models.MasterMilestone(
+                    training_plan_id=training_plan.id,
+                    milestone_number=index,
+                    title=milestone["title"],
+                    description=milestone["description"],
+                    estimated_days=milestone["estimated_days"],
+                    sort_order=index,
                 )
+                db.add(master_milestone)
+                db.flush()
 
-            for question in milestone["quiz_questions"]:
-                db.add(
-                    models.MasterQuizQuestion(
-                        master_milestone_id=master_milestone.id,
-                        question_text=question["text"],
-                        question_type="multiple_choice",
-                        difficulty=question["difficulty"],
-                        options=json.dumps(question["options"]),
-                        correct_answer=question["correct"],
-                        explanation=question["explanation"],
+                for material in milestone["study_materials"]:
+                    db.add(
+                        models.MasterStudyMaterial(
+                            master_milestone_id=master_milestone.id,
+                            content_type=material["type"],
+                            title=material["title"],
+                            short_description=material["short_description"],
+                            content=material["content"],
+                            sort_order=material["sort_order"],
+                        )
                     )
-                )
 
-        db.commit()
+                for question in milestone["quiz_questions"]:
+                    db.add(
+                        models.MasterQuizQuestion(
+                            master_milestone_id=master_milestone.id,
+                            question_text=question["text"],
+                            question_type="multiple_choice",
+                            difficulty=question["difficulty"],
+                            options=json.dumps(question["options"]),
+                            correct_answer=question["correct"],
+                            explanation=question["explanation"],
+                        )
+                    )
+
+            db.commit()
+        except Exception as e:
+            print(f"Error generating plan: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
     user_plan = models.UserTrainingPlan(
         user_id=current_user_id,
@@ -816,6 +931,60 @@ def get_milestone_detail(
 
     if progress.status == "locked":
         raise HTTPException(status_code=403, detail="This milestone is locked. Complete previous milestones first.")
+
+    # Lazy generation check
+    if not master_milestone.is_content_generated:
+        print(f"Lazy generating content for milestone {milestone_id}...")
+        try:
+            # Fetch context
+            plan = db.query(models.TrainingPlan).filter(models.TrainingPlan.id == master_milestone.training_plan_id).first()
+            if plan:
+                role = db.query(models.Role).filter(models.Role.id == plan.role_id).first()
+                level = db.query(models.ExperienceLevel).filter(models.ExperienceLevel.id == plan.experience_level_id).first()
+                
+                if role and level:
+                    raw_content = _generate_milestone_content(
+                        master_milestone.title,
+                        master_milestone.description,
+                        role.name,
+                        level.name
+                    )
+                    
+                    processed = _process_milestone_content(raw_content, master_milestone.title)
+                    
+                    # Save materials
+                    for material in processed.get("study_materials", []):
+                        db.add(
+                            models.MasterStudyMaterial(
+                                master_milestone_id=master_milestone.id,
+                                content_type=material["type"],
+                                title=material["title"],
+                                short_description=material["short_description"],
+                                content=material["content"],
+                                sort_order=material.get("sort_order", 0),
+                            )
+                        )
+                        
+                    # Save questions
+                    for question in processed.get("quiz_questions", []):
+                        db.add(
+                            models.MasterQuizQuestion(
+                                master_milestone_id=master_milestone.id,
+                                question_text=question["text"],
+                                question_type="multiple_choice",
+                                difficulty=question["difficulty"],
+                                options=json.dumps(question["options"]),
+                                correct_answer=question["correct"],
+                                explanation=question["explanation"],
+                            )
+                        )
+                        
+                    master_milestone.is_content_generated = True
+                    db.commit()
+                    db.refresh(master_milestone)
+        except Exception as e:
+            print(f"Error in lazy generation: {e}")
+            # Log and continue (content will be empty, which is better than 500)
 
     # 4. Get study materials
     materials = (
@@ -1265,3 +1434,133 @@ def face_register(payload: schemas.RegisterRequest, db: Session = Depends(get_db
 
     token = auth.create_access_token({"sub": str(user.id)})
     return schemas.RegisterResponse(token=token, user=schemas.UserRead.model_validate(user))
+
+
+@app.post("/system/jobs/maintain-milestones")
+def maintain_milestones(
+    x_system_key: str = Header(..., alias="X-System-Key"),
+    db: Session = Depends(get_db)
+):
+    if x_system_key != "careerai-internal-cron":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Start Job Log
+    job_log = models.SystemJobLog(
+        job_name="maintain_milestones",
+        started_at=datetime.utcnow(),
+        status="running",
+        processed_count=0,
+        success_count=0,
+        failure_count=0
+    )
+    db.add(job_log)
+    db.commit()
+    db.refresh(job_log)
+
+    try:
+        # Find any milestones that need content, regardless of locked status
+        candidates = (
+            db.query(models.MasterMilestone)
+            .filter(models.MasterMilestone.is_content_generated.is_(False))
+            .limit(5)
+            .all()
+        )
+        
+        results = {"processed": 0, "errors": []}
+        
+        for milestone in candidates:
+            try:
+                print(f"Cron: Generating content for milestone {milestone.id} ({milestone.title})...")
+                plan = db.query(models.TrainingPlan).filter(models.TrainingPlan.id == milestone.training_plan_id).first()
+                if not plan:
+                    continue
+                    
+                role = db.query(models.Role).filter(models.Role.id == plan.role_id).first()
+                level = db.query(models.ExperienceLevel).filter(models.ExperienceLevel.id == plan.experience_level_id).first()
+                
+                if not role or not level:
+                    continue
+
+                raw_content = _generate_milestone_content(
+                    milestone.title,
+                    milestone.description,
+                    role.name,
+                    level.name
+                )
+                
+                processed = _process_milestone_content(raw_content, milestone.title)
+                
+                # Save materials
+                for material in processed.get("study_materials", []):
+                    db.add(
+                        models.MasterStudyMaterial(
+                            master_milestone_id=milestone.id,
+                            content_type=material["type"],
+                            title=material["title"],
+                            short_description=material["short_description"],
+                            content=material["content"],
+                            sort_order=material.get("sort_order", 0),
+                        )
+                    )
+                    
+                # Save questions
+                for question in processed.get("quiz_questions", []):
+                    db.add(
+                        models.MasterQuizQuestion(
+                            master_milestone_id=milestone.id,
+                            question_text=question["text"],
+                            question_type="multiple_choice",
+                            difficulty=question["difficulty"],
+                            options=json.dumps(question["options"]),
+                            correct_answer=question["correct"],
+                            explanation=question["explanation"],
+                        )
+                    )
+                    
+                milestone.is_content_generated = True
+                
+                # Update job log success count
+                job_log.success_count += 1
+                db.add(job_log)
+                
+                db.commit()
+                results["processed"] += 1
+                
+            except Exception as e:
+                print(f"Cron Error for milestone {milestone.id}: {e}")
+                results["errors"].append({"milestone_id": milestone.id, "error": str(e)})
+                db.rollback()
+                
+                # Update job log failure count safely
+                job_log = db.query(models.SystemJobLog).filter(models.SystemJobLog.id == job_log.id).first()
+                if job_log:
+                    job_log.failure_count += 1
+                    current_msg = job_log.error_message or ""
+                    new_msg = f"Error on milestone {milestone.id}: {str(e)}"
+                    if current_msg:
+                        job_log.error_message = f"{current_msg}; {new_msg}"
+                    else:
+                        job_log.error_message = new_msg
+                    db.commit()
+            
+        # Finish Job Log
+        job_log = db.query(models.SystemJobLog).filter(models.SystemJobLog.id == job_log.id).first()
+        if job_log:
+            job_log.finished_at = datetime.utcnow()
+            job_log.status = "completed"
+            job_log.processed_count = results["processed"]
+            db.commit()
+            
+        return results
+
+    except Exception as e:
+        # Job failed globally
+        db.rollback()
+        job_log = db.query(models.SystemJobLog).filter(models.SystemJobLog.id == job_log.id).first()
+        if job_log:
+            job_log.finished_at = datetime.utcnow()
+            job_log.status = "failed"
+            job_log.error_message = f"Critical Job Error: {str(e)}"
+            db.commit()
+        raise e
+

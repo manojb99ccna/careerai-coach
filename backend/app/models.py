@@ -86,6 +86,7 @@ class MasterMilestone(Base):
     description = Column(Text, nullable=True)
     estimated_days = Column(Integer, nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
+    is_content_generated = Column(Boolean, nullable=False, server_default="0")
 
 
 class MasterStudyMaterial(Base):
@@ -158,3 +159,18 @@ class UserQuizAttempt(Base):
     total_questions = Column(Integer, nullable=False)
     passed = Column(Boolean, nullable=False, server_default="0")
     attempted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class SystemJobLog(Base):
+    __tablename__ = "system_job_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_name = Column(String(100), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), nullable=False)
+    processed_count = Column(Integer, default=0)
+    success_count = Column(Integer, default=0)
+    failure_count = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
