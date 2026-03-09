@@ -12,6 +12,10 @@ class User(Base):
     phone = Column(String(50), nullable=False)
     face_encoding = Column(Text, nullable=False)
     profile_image = Column(Text, nullable=True)
+    is_admin = Column(Boolean, nullable=False, server_default="0")
+    admin_password_salt = Column(String(255), nullable=True)
+    admin_password_hash = Column(String(255), nullable=True)
+    admin_password_iterations = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -53,6 +57,24 @@ class UserLoginDetail(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     login_method = Column(String(20), nullable=True)
     face_encoding = Column(Text, nullable=True)
+    face_image_path = Column(String(500), nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    device_info = Column(String(255), nullable=True)
+    browser_info = Column(String(255), nullable=True)
+    os_info = Column(String(100), nullable=True)
+    login_status = Column(String(10), nullable=False)
+    failure_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class FaceLoginAttempt(Base):
+    __tablename__ = "face_login_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    matched_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    match_type = Column(String(20), nullable=False, server_default="none")
+    login_method = Column(String(20), nullable=True)
     face_image_path = Column(String(500), nullable=True)
     confidence_score = Column(Float, nullable=True)
     ip_address = Column(String(45), nullable=True)
@@ -138,6 +160,7 @@ class UserMilestoneProgress(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     progress_percentage = Column(Integer, nullable=False, server_default="0")
     practice_completed = Column(Boolean, nullable=False, server_default="0")
+    practice_completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class UserStudyMaterialProgress(Base):
@@ -159,6 +182,21 @@ class UserQuizAttempt(Base):
     total_questions = Column(Integer, nullable=False)
     passed = Column(Boolean, nullable=False, server_default="0")
     attempted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class UserQuizAnswer(Base):
+    __tablename__ = "user_quiz_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_quiz_attempt_id = Column(Integer, ForeignKey("user_quiz_attempts.id"), nullable=False)
+    question_id = Column(Integer, ForeignKey("master_quiz_questions.id"), nullable=False)
+    selected_answer = Column(String(10), nullable=False)
+    correct_answer = Column(String(10), nullable=False)
+    is_correct = Column(Boolean, nullable=False, server_default="0")
+    question_text_snapshot = Column(Text, nullable=True)
+    options_snapshot = Column(Text, nullable=True)
+    explanation_snapshot = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class SystemJobLog(Base):

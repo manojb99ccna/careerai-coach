@@ -46,11 +46,12 @@ function RegisterPage() {
       if (response.data.user) {
         localStorage.setItem('careerai_user', JSON.stringify(response.data.user))
       }
-      localStorage.setItem('careerai_onboarding_complete', 'false')
+      // Go directly to dashboard after registration as requested
+      localStorage.setItem('careerai_onboarding_complete', 'true')
       localStorage.removeItem('careerai_face_encoding')
       localStorage.removeItem('careerai_face_image')
 
-      navigate('/onboarding')
+      navigate('/dashboard')
     } catch {
       setError('Registration failed. Please check your details and try again.')
     } finally {

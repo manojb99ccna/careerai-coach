@@ -9,16 +9,17 @@ from uuid import uuid4
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from jose import JWTError, jwt
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from . import auth, face_utils, models, schemas
 from .database import Base, SessionLocal, engine
+from .deps import get_current_user_id, get_db
+from .routers import admin as admin_router
 
 
 Base.metadata.create_all(bind=engine)
@@ -28,8 +29,59 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MEDIA_ROOT = BASE_DIR / "media"
 PROFILE_DIR = MEDIA_ROOT / "profile"
 RESUME_DIR = MEDIA_ROOT / "resume"
+LOGIN_FACE_DIR = MEDIA_ROOT / "login_faces"
 PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 RESUME_DIR.mkdir(parents=True, exist_ok=True)
+LOGIN_FACE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _ensure_users_is_admin_column() -> None:
+    try:
+        with engine.begin() as conn:
+            exists = conn.execute(
+                text(
+                    "SELECT COUNT(*) "
+                    "FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() "
+                    "AND TABLE_NAME = 'users' "
+                    "AND COLUMN_NAME = 'is_admin'"
+                )
+            ).scalar()
+            if int(exists or 0) == 0:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_admin TINYINT(1) NOT NULL DEFAULT 0"))
+    except Exception:
+        return
+
+
+_ensure_users_is_admin_column()
+
+
+def _ensure_users_admin_password_columns() -> None:
+    try:
+        with engine.begin() as conn:
+            columns = {
+                "admin_password_salt": "ALTER TABLE users ADD COLUMN admin_password_salt VARCHAR(255) NULL",
+                "admin_password_hash": "ALTER TABLE users ADD COLUMN admin_password_hash VARCHAR(255) NULL",
+                "admin_password_iterations": "ALTER TABLE users ADD COLUMN admin_password_iterations INT NULL",
+            }
+            for column_name, ddl in columns.items():
+                exists = conn.execute(
+                    text(
+                        "SELECT COUNT(*) "
+                        "FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_SCHEMA = DATABASE() "
+                        "AND TABLE_NAME = 'users' "
+                        "AND COLUMN_NAME = :col"
+                    ),
+                    {"col": column_name},
+                ).scalar()
+                if int(exists or 0) == 0:
+                    conn.execute(text(ddl))
+    except Exception:
+        return
+
+
+_ensure_users_admin_password_columns()
 
 
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -39,6 +91,15 @@ def _save_profile_image_bytes(data: bytes, suggested_ext: str = "jpg") -> str:
     ext = suggested_ext or "jpg"
     filename = f"profile_{uuid4().hex}.{ext}"
     file_path = PROFILE_DIR / filename
+    with open(file_path, "wb") as f:
+        f.write(data)
+    return filename
+
+
+def _save_login_face_image_bytes(data: bytes, suggested_ext: str = "jpg") -> str:
+    ext = suggested_ext or "jpg"
+    filename = f"login_{uuid4().hex}.{ext}"
+    file_path = LOGIN_FACE_DIR / filename
     with open(file_path, "wb") as f:
         f.write(data)
     return filename
@@ -75,35 +136,26 @@ def save_profile_image_from_data_url(data_url: str) -> Optional[str]:
     return _save_profile_image_bytes(binary, ext)
 
 
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def save_login_face_image_from_data_url(data_url: str) -> Optional[str]:
+    if not data_url:
+        return None
 
-
-def get_current_user_id(authorization: str = Header(..., alias="Authorization")) -> int:
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
+    header, _, data = data_url.partition(",")
+    if not data:
+        data = header
 
     try:
-        payload = jwt.decode(token, auth.JWT_SECRET_KEY, algorithms=[auth.JWT_ALGORITHM])
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        binary = base64.b64decode(data)
+    except Exception:
+        return None
 
-    sub = payload.get("sub")
-    if sub is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    ext = "jpg"
+    if "png" in header:
+        ext = "png"
+    elif "jpeg" in header:
+        ext = "jpg"
 
-    try:
-        return int(sub)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user id in token")
+    return _save_login_face_image_bytes(binary, ext)
 
 
 app = FastAPI(title="CareerAI Coach Backend", debug=True)
@@ -127,6 +179,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(admin_router.router, prefix="/admin", tags=["admin"])
 
 
 FACE_MATCH_THRESHOLD = 0.6
@@ -1187,6 +1241,7 @@ def complete_practice(
         raise HTTPException(status_code=404, detail="Milestone progress not found")
     
     progress.practice_completed = True
+    progress.practice_completed_at = func.now()
     db.commit()
     
     return {"status": "success", "practice_completed": True}
@@ -1374,7 +1429,7 @@ def submit_quiz(
     score_percent = int((correct_count / final_total) * 100) if final_total > 0 else 0
     passed = score_percent >= 70  # Pass threshold
 
-    # Record attempt
+    # Record attempt and answers
     attempt = models.UserQuizAttempt(
         user_milestone_progress_id=progress.id,
         score=score_percent,
@@ -1382,6 +1437,26 @@ def submit_quiz(
         passed=passed,
     )
     db.add(attempt)
+    db.flush()  # get attempt.id
+
+    for qid_str, user_answer in payload.answers.items():
+        try:
+            qid = int(qid_str)
+        except ValueError:
+            continue
+        question = question_map.get(qid)
+        if not question:
+            continue
+        db.add(models.UserQuizAnswer(
+            user_quiz_attempt_id=attempt.id,
+            question_id=question.id,
+            selected_answer=str(user_answer).strip().upper(),
+            correct_answer=str(question.correct_answer or "").strip().upper(),
+            is_correct=bool(details[qid]["correct"]),
+            question_text_snapshot=question.question_text,
+            options_snapshot=question.options,
+            explanation_snapshot=question.explanation,
+        ))
     
     # Update milestone status if passed
     if passed:
@@ -1426,9 +1501,28 @@ def submit_quiz(
         details=details
     )
 
+def _ensure_user_milestone_practice_ts() -> None:
+    try:
+        with engine.begin() as conn:
+            exists = conn.execute(
+                text(
+                    "SELECT COUNT(*) "
+                    "FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() "
+                    "AND TABLE_NAME = 'user_milestone_progress' "
+                    "AND COLUMN_NAME = 'practice_completed_at'"
+                )
+            ).scalar()
+            if int(exists or 0) == 0:
+                conn.execute(text("ALTER TABLE user_milestone_progress ADD COLUMN practice_completed_at DATETIME NULL"))
+    except Exception:
+        return
+
+_ensure_user_milestone_practice_ts()
+
 
 @app.post("/auth/face/login", response_model=schemas.FaceLoginResponse)
-def face_login(payload: schemas.FaceScanRequest, db: Session = Depends(get_db)) -> schemas.FaceLoginResponse:
+def face_login(payload: schemas.FaceScanRequest, request: Request, db: Session = Depends(get_db)) -> schemas.FaceLoginResponse:
     users: List[models.User] = db.query(models.User).all()
     best_user: Optional[models.User] = None
     best_distance: Optional[float] = None
@@ -1439,7 +1533,34 @@ def face_login(payload: schemas.FaceScanRequest, db: Session = Depends(get_db)) 
             best_distance = distance
             best_user = user
 
-    if best_user is None or best_distance is None or best_distance > FACE_MATCH_THRESHOLD:
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    face_image_name = save_login_face_image_from_data_url(payload.image_data_url) if payload.image_data_url else None
+
+    success = best_user is not None and best_distance is not None and best_distance <= FACE_MATCH_THRESHOLD
+    match_type = "none"
+    matched_user_id = None
+    if best_user is not None:
+        matched_user_id = best_user.id
+        match_type = "verified" if success else "closest_match"
+
+    attempt = models.FaceLoginAttempt(
+        matched_user_id=matched_user_id,
+        match_type=match_type,
+        login_method="face",
+        face_image_path=face_image_name,
+        confidence_score=float(best_distance) if best_distance is not None else None,
+        ip_address=ip_address,
+        device_info=user_agent,
+        browser_info=user_agent,
+        os_info=None,
+        login_status="success" if success else "failure",
+        failure_reason=None if success else "register_required",
+    )
+    db.add(attempt)
+    db.commit()
+
+    if not success:
         return schemas.FaceLoginResponse(status="register_required")
 
     from json import dumps as json_dumps
@@ -1448,8 +1569,13 @@ def face_login(payload: schemas.FaceScanRequest, db: Session = Depends(get_db)) 
         user_id=best_user.id,
         login_method="face",
         face_encoding=json_dumps(payload.encoding),
+        face_image_path=face_image_name,
         confidence_score=float(best_distance),
         login_status="success",
+        ip_address=ip_address,
+        device_info=user_agent,
+        browser_info=user_agent,
+        os_info=None,
     )
     db.add(login_detail)
     db.commit()
@@ -1459,7 +1585,7 @@ def face_login(payload: schemas.FaceScanRequest, db: Session = Depends(get_db)) 
 
 
 @app.post("/auth/face/register", response_model=schemas.RegisterResponse, status_code=status.HTTP_201_CREATED)
-def face_register(payload: schemas.RegisterRequest, db: Session = Depends(get_db)) -> schemas.RegisterResponse:
+def face_register(payload: schemas.RegisterRequest, request: Request, db: Session = Depends(get_db)) -> schemas.RegisterResponse:
     existing = db.query(models.User).filter(models.User.email == payload.email).first()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
@@ -1480,6 +1606,41 @@ def face_register(payload: schemas.RegisterRequest, db: Session = Depends(get_db
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Count registration as a successful login event for admin analytics
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
+    attempt = models.FaceLoginAttempt(
+        matched_user_id=user.id,
+        match_type="verified",
+        login_method="register",
+        face_image_path=None,
+        confidence_score=None,
+        ip_address=ip_address,
+        device_info=user_agent,
+        browser_info=user_agent,
+        os_info=None,
+        login_status="success",
+        failure_reason=None,
+    )
+    db.add(attempt)
+    db.commit()
+
+    login_detail = models.UserLoginDetail(
+        user_id=user.id,
+        login_method="register",
+        face_encoding=None,
+        face_image_path=None,
+        confidence_score=None,
+        login_status="success",
+        ip_address=ip_address,
+        device_info=user_agent,
+        browser_info=user_agent,
+        os_info=None,
+    )
+    db.add(login_detail)
+    db.commit()
 
     token = auth.create_access_token({"sub": str(user.id)})
     return schemas.RegisterResponse(token=token, user=schemas.UserRead.model_validate(user))
@@ -1592,4 +1753,3 @@ def maintain_milestones(
             job_log.error_message = f"Critical Job Error: {str(e)}"
             db.commit()
         raise e
-

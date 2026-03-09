@@ -82,6 +82,7 @@ function FaceScanPage() {
 
       const response = await apiClient.post('/auth/face/login', {
         encoding,
+        image_data_url: screenshot,
       })
 
       if (response.data.status === 'login_success') {

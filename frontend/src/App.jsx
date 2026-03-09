@@ -13,6 +13,13 @@ import MilestoneDetailPage from './pages/MilestoneDetailPage.jsx'
 import AIFeedbackPage from './pages/AIFeedbackPage.jsx'
 import ResumeSuggestionsPage from './pages/ResumeSuggestionsPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
+import AdminProtectedRoute from './components/AdminProtectedRoute.jsx'
+import AdminLayout from './components/AdminLayout.jsx'
+import AdminLoginPage from './pages/admin/AdminLoginPage.jsx'
+import AdminDashboardPage from './pages/admin/AdminDashboardPage.jsx'
+import AdminUsersPage from './pages/admin/AdminUsersPage.jsx'
+import AdminMasterDataPage from './pages/admin/AdminMasterDataPage.jsx'
+import AdminSettingsPage from './pages/admin/AdminSettingsPage.jsx'
 
 function WelcomeRoute() {
   const navigate = useNavigate()
@@ -52,6 +59,15 @@ function App() {
       <Route path="/scan" element={<FaceScanPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/onboarding" element={<CareerQAPage />} />
+      <Route path="/admin" element={<AdminProtectedRoute />}>
+        <Route index element={<AdminLoginPage />} />
+        <Route element={<AdminLayout />}>
+          <Route path="dashboard" element={<AdminDashboardPage />} />
+          <Route path="users" element={<AdminUsersPage />} />
+          <Route path="master-data" element={<AdminMasterDataPage />} />
+          <Route path="settings" element={<AdminSettingsPage />} />
+        </Route>
+      </Route>
       <Route path="/*" element={<AppLayout />} />
     </Routes>
   )
